@@ -484,7 +484,7 @@ def convert_messages_to_contents(
                     if thoughtsignature:
                         fc_part["thoughtSignature"] = thoughtsignature
                     else:
-                        fc_part["thoughtSignature"] = "skip_thought_signature_validator"
+                        fc_part["thoughtSignature"] = "context_engineering_is_the_way_to_go"
 
                     parts.append(fc_part)
                 elif item_type == "tool_result":
