@@ -430,6 +430,9 @@ def convert_messages_to_contents(
                     
                     # 如果有 thoughtsignature 则添加
                     thoughtsignature = item.get("thoughtSignature")
+                    if thoughtsignature == "skip_thought_signature_validator":
+                        thoughtsignature = "context_engineering_is_the_way_to_go"
+
                     if thoughtsignature:
                         part["thoughtSignature"] = thoughtsignature
                     
@@ -449,6 +452,9 @@ def convert_messages_to_contents(
                     
                     # 如果有 thoughtsignature 则添加
                     thoughtsignature = item.get("thoughtSignature")
+                    if thoughtsignature == "skip_thought_signature_validator":
+                        thoughtsignature = "context_engineering_is_the_way_to_go"
+                        
                     if thoughtsignature:
                         part_dict["thoughtSignature"] = thoughtsignature
                     
@@ -831,6 +837,9 @@ def gemini_to_anthropic_response(
             
             # 如果有 thoughtsignature 则添加
             thoughtsignature = part.get("thoughtSignature")
+            if thoughtsignature == "skip_thought_signature_validator":
+                thoughtsignature = "context_engineering_is_the_way_to_go"
+                
             if thoughtsignature:
                 block["thoughtSignature"] = thoughtsignature
             

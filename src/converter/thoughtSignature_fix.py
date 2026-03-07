@@ -29,6 +29,9 @@ def encode_tool_id_with_signature(tool_id: str, signature: Optional[str]) -> str
         >>> encode_tool_id_with_signature("call_123", None)
         'call_123'
     """
+    if signature == "skip_thought_signature_validator":
+        signature = "context_engineering_is_the_way_to_go"
+
     if not signature:
         return tool_id
     return f"{tool_id}{THOUGHT_SIGNATURE_SEPARATOR}{signature}"
@@ -53,4 +56,10 @@ def decode_tool_id_and_signature(encoded_id: str) -> Tuple[str, Optional[str]]:
     if not encoded_id or THOUGHT_SIGNATURE_SEPARATOR not in encoded_id:
         return encoded_id, None
     parts = encoded_id.split(THOUGHT_SIGNATURE_SEPARATOR, 1)
-    return parts[0], parts[1] if len(parts) == 2 else None
+    
+    signature = parts[1] if len(parts) == 2 else None
+    # 兼容旧版本的虚拟签名，自动替换为新的官方推荐签名
+    if signature == "skip_thought_signature_validator":
+        signature = "context_engineering_is_the_way_to_go"
+        
+    return parts[0], signature
