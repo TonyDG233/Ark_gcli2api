@@ -1056,14 +1056,14 @@ async def convert_openai_to_gemini_request(openai_request: Dict[str, Any]) -> Di
                 parts.append({"text": content})
 
             # 添加每个工具调用
-            for tool_call in tool_calls:
+            for idx, tool_call in enumerate(tool_calls):
                 try:
                     args = (
                         json.loads(tool_call["function"]["arguments"])
                         if isinstance(tool_call["function"]["arguments"], str)
                         else tool_call["function"]["arguments"]
                     )
-                    
+
                     # 根据工具的 schema 修正参数类型
                     func_name = tool_call["function"]["name"]
                     if func_name in tool_schemas:
@@ -1083,10 +1083,12 @@ async def convert_openai_to_gemini_request(openai_request: Dict[str, Any]) -> Di
                     }
 
                     # 如果有thoughtSignature则添加，否则使用占位符以满足 Gemini API 要求
-                    if signature:
-                        function_call_part["thoughtSignature"] = signature
-                    else:
-                        function_call_part["thoughtSignature"] = "context_engineering_is_the_way to_go"
+                    # 注意：Gemini 3 并行函数调用只在第一个部分添加签名
+                    if idx == 0:
+                        if signature:
+                            function_call_part["thoughtSignature"] = signature
+                        else:
+                            function_call_part["thoughtSignature"] = "context_engineering_is_the_way_to_go"
 
                     parts.append(function_call_part)
                 except (json.JSONDecodeError, KeyError) as e:

@@ -431,7 +431,7 @@ def convert_messages_to_contents(
                     # 如果有 thoughtsignature 则添加
                     thoughtsignature = item.get("thoughtSignature")
                     if thoughtsignature == "skip_thought_signature_validator":
-                        thoughtsignature = "context_engineering_is_the_way to_go"
+                        thoughtsignature = "context_engineering_is_the_way_to_go"
 
                     if thoughtsignature:
                         part["thoughtSignature"] = thoughtsignature
@@ -453,7 +453,7 @@ def convert_messages_to_contents(
                     # 如果有 thoughtsignature 则添加
                     thoughtsignature = item.get("thoughtSignature")
                     if thoughtsignature == "skip_thought_signature_validator":
-                        thoughtsignature = "context_engineering_is_the_way to_go"
+                        thoughtsignature = "context_engineering_is_the_way_to_go"
                         
                     if thoughtsignature:
                         part_dict["thoughtSignature"] = thoughtsignature
@@ -490,7 +490,7 @@ def convert_messages_to_contents(
                     if thoughtsignature:
                         fc_part["thoughtSignature"] = thoughtsignature
                     else:
-                        fc_part["thoughtSignature"] = "context_engineering_is_the_way to_go"
+                        fc_part["thoughtSignature"] = "context_engineering_is_the_way_to_go"
 
                     parts.append(fc_part)
                 elif item_type == "tool_result":
@@ -535,10 +535,15 @@ def convert_messages_to_contents(
 
 def reorganize_tool_messages(contents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    重新组织消息，满足 tool_use/tool_result 约束。
+    重新组织消息，以满足 Gemini 的并行 tool_calls 约束。
+    Gemini 规定：并行函数调用（FC1, FC2）和它们的响应（FR1, FR2）必须聚集，
+    决不能交叉放置（即不能 FC1, FR1, FC2, FR2 这样交错，否则会报 400 错误）。
+    并且并行 FC 中，只有第一个 FC 允许带有 thoughtSignature！
     """
+    new_contents = []
     tool_results: Dict[str, Dict[str, Any]] = {}
 
+    # 1. 首先收集所有的 functionResponse
     for msg in contents:
         for part in msg.get("parts", []) or []:
             if isinstance(part, dict) and "functionResponse" in part:
@@ -546,34 +551,46 @@ def reorganize_tool_messages(contents: List[Dict[str, Any]]) -> List[Dict[str, A
                 if tool_id:
                     tool_results[str(tool_id)] = part
 
-    flattened: List[Dict[str, Any]] = []
+    # 2. 重建 contents
     for msg in contents:
         role = msg.get("role")
-        for part in msg.get("parts", []) or []:
-            flattened.append({"role": role, "parts": [part]})
-
-    new_contents: List[Dict[str, Any]] = []
-    i = 0
-    while i < len(flattened):
-        msg = flattened[i]
-        part = msg["parts"][0]
-
-        if isinstance(part, dict) and "functionResponse" in part:
-            i += 1
-            continue
-
-        if isinstance(part, dict) and "functionCall" in part:
-            tool_id = (part.get("functionCall") or {}).get("id")
-            new_contents.append({"role": "model", "parts": [part]})
-
-            if tool_id is not None and str(tool_id) in tool_results:
-                new_contents.append({"role": "user", "parts": [tool_results[str(tool_id)]]})
-
-            i += 1
-            continue
-
-        new_contents.append(msg)
-        i += 1
+        parts = msg.get("parts", []) or []
+        
+        # 过滤出当前的 parts (跳过 functionResponse, 我们会在 functionCall 后面统一附加)
+        filtered_parts = []
+        fc_parts = []
+        
+        for part in parts:
+            if isinstance(part, dict) and "functionResponse" in part:
+                continue
+            
+            if isinstance(part, dict) and "functionCall" in part:
+                fc_parts.append(part)
+            else:
+                filtered_parts.append(part)
+                
+        # 如果有普通 part (text/image 等)，单独作为一条消息（或者和 fc 放在一起？Gemini允许文本和FC在同一消息）
+        # 这里保持原逻辑：如果有非fc，加进去
+        if filtered_parts or fc_parts:
+            # 修正并行 FC 的 thoughtSignature (只有第一个允许)
+            for idx, fc_part in enumerate(fc_parts):
+                if idx > 0 and "thoughtSignature" in fc_part:
+                    del fc_part["thoughtSignature"]
+                    
+            msg_to_add = {"role": role, "parts": filtered_parts + fc_parts}
+            if msg_to_add["parts"]:
+                 new_contents.append(msg_to_add)
+                 
+            # 如果包含 FC，则紧接着追加一个 user 消息包含所有的 FR
+            if fc_parts:
+                fr_parts = []
+                for fc_part in fc_parts:
+                    tool_id = (fc_part.get("functionCall") or {}).get("id")
+                    if tool_id is not None and str(tool_id) in tool_results:
+                        fr_parts.append(tool_results[str(tool_id)])
+                
+                if fr_parts:
+                    new_contents.append({"role": "user", "parts": fr_parts})
 
     return new_contents
 
@@ -838,7 +855,7 @@ def gemini_to_anthropic_response(
             # 如果有 thoughtsignature 则添加
             thoughtsignature = part.get("thoughtSignature")
             if thoughtsignature == "skip_thought_signature_validator":
-                thoughtsignature = "context_engineering_is_the_way to_go"
+                thoughtsignature = "context_engineering_is_the_way_to_go"
                 
             if thoughtsignature:
                 block["thoughtSignature"] = thoughtsignature
