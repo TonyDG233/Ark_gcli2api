@@ -391,6 +391,20 @@ async def normalize_gemini_request(
         cleaned_contents = []
         for content in result["contents"]:
             if isinstance(content, dict) and "parts" in content:
+                # 修复 Gemini 格式中 functionCall 缺失 thoughtSignature 的问题
+                # Google 规定：并行工具调用时，仅有第一个 functionCall 允许且必须带有 thoughtSignature
+                if content.get("role") == "model":
+                    has_seen_signature = False
+                    for part in content["parts"]:
+                        if isinstance(part, dict) and "functionCall" in part:
+                            if not has_seen_signature:
+                                if "thoughtSignature" not in part:
+                                    part["thoughtSignature"] = "context_engineering_is_the_way_to_go"
+                                has_seen_signature = True
+                            else:
+                                if "thoughtSignature" in part:
+                                    del part["thoughtSignature"]
+
                 # 过滤掉空的或无效的 parts
                 valid_parts = []
                 for part in content["parts"]:
