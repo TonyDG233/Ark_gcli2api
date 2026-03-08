@@ -30,7 +30,7 @@ def encode_tool_id_with_signature(tool_id: str, signature: Optional[str]) -> str
         'call_123'
     """
     if signature == "skip_thought_signature_validator":
-        signature = "context_engineering_is_the_way_to_go"
+        signature = "context_engineering_is_the_way to_go"
 
     if not signature:
         return tool_id
@@ -60,6 +60,6 @@ def decode_tool_id_and_signature(encoded_id: str) -> Tuple[str, Optional[str]]:
     signature = parts[1] if len(parts) == 2 else None
     # 兼容旧版本的虚拟签名，自动替换为新的官方推荐签名
     if signature == "skip_thought_signature_validator":
-        signature = "context_engineering_is_the_way_to_go"
+        signature = "context_engineering_is_the_way to_go"
         
     return parts[0], signature

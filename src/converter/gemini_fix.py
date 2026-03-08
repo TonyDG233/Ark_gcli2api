@@ -331,7 +331,7 @@ async def normalize_gemini_request(
                                 thinking_part = {
                                     "text": "...",
                                     # "thought": True,  # 标记为思考块
-                                    "thoughtSignature": "context_engineering_is_the_way_to_go"  # 官方文档推荐的虚拟签名
+                                    "thoughtSignature": "context_engineering_is_the_way to_go"  # 官方文档推荐的虚拟签名
                                 }
                                 # 如果第一个 part 不是 thinking，则插入
                                 if not parts or not (isinstance(parts[0], dict) and ("thought" in parts[0] or "thoughtSignature" in parts[0])):

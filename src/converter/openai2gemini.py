@@ -1086,7 +1086,7 @@ async def convert_openai_to_gemini_request(openai_request: Dict[str, Any]) -> Di
                     if signature:
                         function_call_part["thoughtSignature"] = signature
                     else:
-                        function_call_part["thoughtSignature"] = "context_engineering_is_the_way_to_go"
+                        function_call_part["thoughtSignature"] = "context_engineering_is_the_way to_go"
 
                     parts.append(function_call_part)
                 except (json.JSONDecodeError, KeyError) as e:
