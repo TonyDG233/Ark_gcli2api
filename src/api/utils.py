@@ -470,7 +470,8 @@ def parse_quota_reset_timestamp(error_response: dict) -> Optional[float]:
     }
     """
     try:
-        details = error_response.get("error", {}).get("details", [])
+        error_obj = error_response.get("error", {})
+        details = error_obj.get("details", [])
 
         for detail in details:
             if detail.get("@type") == "type.googleapis.com/google.rpc.ErrorInfo":
