@@ -1,4 +1,4 @@
-full_hash=20a948f37627a0a8ce6948cc0ed866425de40dc1
-short_hash=20a948f
-message=移除3.0p模型
-date=2026-03-26 19:40:29 +0800
+full_hash=e3ab37a64738c0a9bf7721a2f11bf12388fccf80
+short_hash=e3ab37a
+message=调整说明
+date=2026-04-12 14:08:52 +0800

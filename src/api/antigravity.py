@@ -7,11 +7,11 @@ import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Callable, Tuple
 
 from fastapi import Response
 from config import (
-    get_antigravity_api_url,
+    get_code_assist_endpoint,
     get_antigravity_stream2nostream,
     get_auto_ban_error_codes,
 )
@@ -71,6 +71,38 @@ def build_antigravity_headers(access_token: str, model_name: str = "") -> Dict[s
     return headers
 
 
+def _is_retryable_status(status_code: int, disable_error_codes: List[int]) -> bool:
+    """统一判断是否属于可重试状态码。"""
+    return status_code in (429, 503) or status_code in disable_error_codes
+
+
+async def _switch_credential_for_retry(
+    *,
+    next_cred_task: Optional[asyncio.Task],
+    retry_interval: float,
+    refresh_credential_fast: Callable[[], Any],
+    apply_cred_result: Callable[[Tuple[str, Dict[str, Any]]], bool],
+    log_prefix: str,
+) -> Tuple[bool, Optional[asyncio.Task]]:
+    """优先使用预热凭证，失败后退回同步刷新。"""
+    if next_cred_task is not None:
+        try:
+            cred_result = await next_cred_task
+            next_cred_task = None
+            if cred_result and apply_cred_result(cred_result):
+                await asyncio.sleep(retry_interval)
+                return True, next_cred_task
+        except Exception as e:
+            log.warning(f"{log_prefix} 预热凭证任务失败: {e}")
+            next_cred_task = None
+
+    await asyncio.sleep(retry_interval)
+    if await refresh_credential_fast():
+        return True, next_cred_task
+
+    return False, next_cred_task
+
+
 # ==================== 新的流式和非流式请求函数 ====================
 
 async def stream_request(
@@ -120,7 +152,7 @@ async def stream_request(
         return
 
     # 2. 构建URL和请求头
-    antigravity_url = await get_antigravity_api_url()
+    antigravity_url = await get_code_assist_endpoint()
     target_url = f"{antigravity_url}/v1internal:streamGenerateContent?alt=sse"
 
     auth_headers = build_antigravity_headers(access_token, model_name)
@@ -135,6 +167,15 @@ async def stream_request(
         "project": project_id,
         "request": body.get("request", {}),
     }
+
+    # 仅当凭证明确开启积分消耗时注入 enabledCreditTypes
+    def apply_enabled_credit_types(cred_data: Dict[str, Any]) -> None:
+        if cred_data.get("enable_credit") is True:
+            final_payload["enabledCreditTypes"] = ["GOOGLE_ONE_AI"]
+        else:
+            final_payload.pop("enabledCreditTypes", None)
+
+    apply_enabled_credit_types(credential_data)
 
     # 3. 调用stream_post_async进行请求
     retry_config = await get_retry_config()
@@ -161,6 +202,19 @@ async def stream_request(
         # 只更新token和project_id,不重建整个headers和payload
         auth_headers["Authorization"] = f"Bearer {access_token}"
         final_payload["project"] = project_id
+        apply_enabled_credit_types(credential_data)
+        return True
+
+    def apply_cred_result(cred_result: Tuple[str, Dict[str, Any]]) -> bool:
+        nonlocal current_file, access_token, project_id, auth_headers, final_payload
+        current_file, credential_data = cred_result
+        access_token = credential_data.get("access_token") or credential_data.get("token")
+        project_id = credential_data.get("project_id", "")
+        if not access_token or not project_id:
+            return False
+        auth_headers["Authorization"] = f"Bearer {access_token}"
+        final_payload["project"] = project_id
+        apply_enabled_credit_types(credential_data)
         return True
 
     for attempt in range(max_retries + 1):
@@ -187,7 +241,7 @@ async def stream_request(
                         error_body = ""
 
                     # 如果错误码是429、503或者在禁用码当中，做好记录后进行重试
-                    if status_code == 429 or status_code == 503 or status_code in DISABLE_ERROR_CODES:
+                    if _is_retryable_status(status_code, DISABLE_ERROR_CODES):
                         log.warning(f"[ANTIGRAVITY STREAM] 流式请求失败 (status={status_code}), 凭证: {current_file}, 响应: {error_body[:500] if error_body else '无'}")
 
                         # 解析冷却时间
@@ -284,29 +338,14 @@ async def stream_request(
             if need_retry:
                 log.info(f"[ANTIGRAVITY STREAM] 重试请求 (attempt {attempt + 2}/{max_retries + 1})...")
 
-                # 使用预热的凭证任务,避免等待
-                if next_cred_task is not None:
-                    try:
-                        cred_result = await next_cred_task
-                        next_cred_task = None  # 重置任务
-
-                        if cred_result:
-                            current_file, credential_data = cred_result
-                            access_token = credential_data.get("access_token") or credential_data.get("token")
-                            project_id = credential_data.get("project_id", "")
-                            if access_token and project_id:
-                                auth_headers["Authorization"] = f"Bearer {access_token}"
-                                final_payload["project"] = project_id
-                                await asyncio.sleep(retry_interval)
-                                continue  # 重试
-                    except Exception as e:
-                        log.warning(f"[ANTIGRAVITY STREAM] 预热凭证任务失败: {e}")
-                        next_cred_task = None
-
-                # 如果预热的凭证不可用,则同步获取
-                await asyncio.sleep(retry_interval)
-
-                if not await refresh_credential_fast():
+                switched, next_cred_task = await _switch_credential_for_retry(
+                    next_cred_task=next_cred_task,
+                    retry_interval=retry_interval,
+                    refresh_credential_fast=refresh_credential_fast,
+                    apply_cred_result=apply_cred_result,
+                    log_prefix="[ANTIGRAVITY STREAM]",
+                )
+                if not switched:
                     log.error("[ANTIGRAVITY STREAM] 重试时无可用凭证或令牌")
                     yield Response(
                         content=json.dumps({"error": "当前无可用凭证"}),
@@ -406,7 +445,7 @@ async def non_stream_request(
         )
 
     # 2. 构建URL和请求头
-    antigravity_url = await get_antigravity_api_url()
+    antigravity_url = await get_code_assist_endpoint()
     target_url = f"{antigravity_url}/v1internal:generateContent"
 
     auth_headers = build_antigravity_headers(access_token, model_name)
@@ -421,6 +460,15 @@ async def non_stream_request(
         "project": project_id,
         "request": body.get("request", {}),
     }
+
+    # 仅当凭证明确开启积分消耗时注入 enabledCreditTypes
+    def apply_enabled_credit_types(cred_data: Dict[str, Any]) -> None:
+        if cred_data.get("enable_credit") is True:
+            final_payload["enabledCreditTypes"] = ["GOOGLE_ONE_AI"]
+        else:
+            final_payload.pop("enabledCreditTypes", None)
+
+    apply_enabled_credit_types(credential_data)
 
     # 3. 调用post_async进行请求
     retry_config = await get_retry_config()
@@ -447,6 +495,19 @@ async def non_stream_request(
         # 只更新token和project_id,不重建整个headers和payload
         auth_headers["Authorization"] = f"Bearer {access_token}"
         final_payload["project"] = project_id
+        apply_enabled_credit_types(credential_data)
+        return True
+
+    def apply_cred_result(cred_result: Tuple[str, Dict[str, Any]]) -> bool:
+        nonlocal current_file, access_token, project_id, auth_headers, final_payload
+        current_file, credential_data = cred_result
+        access_token = credential_data.get("access_token") or credential_data.get("token")
+        project_id = credential_data.get("project_id", "")
+        if not access_token or not project_id:
+            return False
+        auth_headers["Authorization"] = f"Bearer {access_token}"
+        final_payload["project"] = project_id
+        apply_enabled_credit_types(credential_data)
         return True
 
     for attempt in range(max_retries + 1):
@@ -511,12 +572,12 @@ async def non_stream_request(
                 except Exception:
                     pass
 
-                if status_code == 429 or status_code == 503 or status_code in DISABLE_ERROR_CODES:
+                if _is_retryable_status(status_code, DISABLE_ERROR_CODES):
                     log.warning(f"[ANTIGRAVITY] 非流式请求失败 (status={status_code}), 凭证: {current_file}, 响应: {error_text[:500] if error_text else '无'}")
 
                     # 解析冷却时间
                     cooldown_until = None
-                    if status_code == 429 or status_code == 503 and error_text:
+                    if (status_code == 429 or status_code == 503) and error_text:
                         try:
                             cooldown_until = await parse_and_log_cooldown(error_text, mode="antigravity")
                         except Exception:
@@ -564,29 +625,14 @@ async def non_stream_request(
             if need_retry:
                 log.info(f"[ANTIGRAVITY] 重试请求 (attempt {attempt + 2}/{max_retries + 1})...")
 
-                # 使用预热的凭证任务,避免等待
-                if next_cred_task is not None:
-                    try:
-                        cred_result = await next_cred_task
-                        next_cred_task = None  # 重置任务
-
-                        if cred_result:
-                            current_file, credential_data = cred_result
-                            access_token = credential_data.get("access_token") or credential_data.get("token")
-                            project_id = credential_data.get("project_id", "")
-                            if access_token and project_id:
-                                auth_headers["Authorization"] = f"Bearer {access_token}"
-                                final_payload["project"] = project_id
-                                await asyncio.sleep(retry_interval)
-                                continue  # 重试
-                    except Exception as e:
-                        log.warning(f"[ANTIGRAVITY] 预热凭证任务失败: {e}")
-                        next_cred_task = None
-
-                # 如果预热的凭证不可用,则同步获取
-                await asyncio.sleep(retry_interval)
-
-                if not await refresh_credential_fast():
+                switched, next_cred_task = await _switch_credential_for_retry(
+                    next_cred_task=next_cred_task,
+                    retry_interval=retry_interval,
+                    refresh_credential_fast=refresh_credential_fast,
+                    apply_cred_result=apply_cred_result,
+                    log_prefix="[ANTIGRAVITY]",
+                )
+                if not switched:
                     log.error("[ANTIGRAVITY] 重试时无可用凭证或令牌")
                     return Response(
                         content=json.dumps({"error": "当前无可用凭证"}),
@@ -655,7 +701,7 @@ async def fetch_available_models() -> List[Dict[str, Any]]:
 
     try:
         # 使用 POST 请求获取模型列表
-        antigravity_url = await get_antigravity_api_url()
+        antigravity_url = await get_code_assist_endpoint()
 
         response = await post_async(
             url=f"{antigravity_url}/v1internal:fetchAvailableModels",
@@ -738,7 +784,7 @@ async def fetch_quota_info(access_token: str) -> Dict[str, Any]:
     headers = build_antigravity_headers(access_token)
 
     try:
-        antigravity_url = await get_antigravity_api_url()
+        antigravity_url = await get_code_assist_endpoint()
 
         response = await post_async(
             url=f"{antigravity_url}/v1internal:fetchAvailableModels",

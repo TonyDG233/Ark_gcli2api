@@ -153,40 +153,64 @@ app.mount("/front", StaticFiles(directory="front"), name="front")
 async def keepalive() -> Response:
     return Response(status_code=200)
 
-async def main():
-    """异步主启动函数"""
+def main():
+    """主启动函数"""
     from hypercorn.asyncio import serve
     from hypercorn.config import Config
-
-    # 日志系统现在直接使用环境变量，无需初始化
-    # 从环境变量或配置获取端口和主机
-    port = await get_server_port()
-    host = await get_server_host()
+    from hypercorn.run import run
 
     workers = int(os.environ.get("WORKERS", 1))
 
-    log.info("=" * 60)
-    log.info("启动 GCLI2API")
-    log.info("=" * 60)
-    log.info(f"控制面板: http://127.0.0.1:{port}")
-    if workers > 1:
+    async def _run():
+        port = await get_server_port()
+        host = await get_server_host()
+
+        log.info("=" * 60)
+        log.info("启动 GCLI2API")
+        log.info("=" * 60)
+        log.info(f"控制面板: http://127.0.0.1:{port}")
+        if workers > 1:
+            log.info(f"Worker 数量: {workers}")
+        log.info("=" * 60)
+
+        config = Config()
+        config.bind = [f"{host}:{port}"]
+        config.accesslog = "-"
+        config.errorlog = "-"
+        config.loglevel = "INFO"
+
+        # 设置连接超时
+        config.keep_alive_timeout = 900
+        config.read_timeout = 900
+
+        await serve(app, config)
+
+    if workers == 1:
+        asyncio.run(_run())
+    else:
+        # 多 worker 模式下 hypercorn run 自行管理进程，先同步获取配置
+        port = int(os.environ.get("PORT", 7861))
+        host = os.environ.get("HOST", "0.0.0.0")
+
+        log.info("=" * 60)
+        log.info("启动 GCLI2API")
+        log.info("=" * 60)
+        log.info(f"控制面板: http://127.0.0.1:{port}")
         log.info(f"Worker 数量: {workers}")
-    log.info("=" * 60)
+        log.info("=" * 60)
 
-    # 配置hypercorn
-    config = Config()
-    config.bind = [f"{host}:{port}"]
-    config.accesslog = "-"
-    config.errorlog = "-"
-    config.loglevel = "INFO"
-    config.workers = workers
+        config = Config()
+        config.bind = [f"{host}:{port}"]
+        config.accesslog = "-"
+        config.errorlog = "-"
+        config.loglevel = "INFO"
+        config.workers = workers
+        config.application_path = "web:app"
+        config.keep_alive_timeout = 900
+        config.read_timeout = 900
 
-    # 设置连接超时
-    config.keep_alive_timeout = 600  # 10分钟
-    config.read_timeout = 600  # 10分钟读取超时
-
-    await serve(app, config)
+        run(config)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
