@@ -1,4 +1,4 @@
-full_hash=944b9e7ed7646038cfbe37c529e47b04bdec299c
-short_hash=944b9e7
-message=修复反重力不正常的503/429问题
-date=2026-04-30 08:25:12 +0800
+full_hash=c2d54b5702ff6be716ef5d6865b0efdc99e26a15
+short_hash=c2d54b5
+message=Merge pull request #374 from kushaldotdev/fix/gemini-schema-ref-validation
+date=2026-05-10 09:03:19 +0800
