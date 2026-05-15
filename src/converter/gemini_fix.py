@@ -373,16 +373,18 @@ async def normalize_gemini_request(
             return prepare_image_generation_request(result, model)
         else:
             # 3. 思考模型处理
-            if is_thinking_model(model) or ("thinkingBudget" in generation_config.get("thinkingConfig", {}) and generation_config["thinkingConfig"]["thinkingBudget"] != 0):
+            if is_thinking_model(model) or ("thinkingBudget" in generation_config.get("thinkingConfig", {}) and generation_config["thinkingConfig"]["thinkingBudget"] != 0) or ("thinkingLevel" in generation_config.get("thinkingConfig", {})):
                 # 直接设置 thinkingConfig
                 if "thinkingConfig" not in generation_config:
                     generation_config["thinkingConfig"] = {}
                 
                 thinking_config = generation_config["thinkingConfig"]
-                # 优先使用传入的思考预算，否则使用默认值
-                if "thinkingBudget" not in thinking_config:
-                    thinking_config["thinkingBudget"] = 1024
-                thinking_config.pop("thinkingLevel", None)  # 避免与 thinkingBudget 冲突
+                
+                # Gemini 3.1 已经弃用 thinkingBudget，改用 thinkingLevel。
+                # 此处如果有传入 thinkingLevel，优先保留；否则不强行注入 thinkingBudget，避免 400 错误。
+                if "thinkingBudget" in thinking_config and "thinkingLevel" in thinking_config:
+                    thinking_config.pop("thinkingBudget", None)  # 避免与 thinkingLevel 冲突
+                
                 thinking_config["includeThoughts"] = return_thoughts
                 
                 # 检查最后一个 assistant 消息是否以 thinking 块开始
