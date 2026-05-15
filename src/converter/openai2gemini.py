@@ -668,11 +668,10 @@ def convert_openai_tools_to_gemini(openai_tools: List, model: str = "") -> List[
 
         # 添加参数（如果有）- 根据模型选择不同的清理函数
         if "parameters" in function:
-            if is_claude_model:
-                cleaned_params = _clean_schema_for_claude(function["parameters"])
-                log.debug(f"[OPENAI2GEMINI] Using Claude schema cleaning for tool: {normalized_name}")
-            else:
-                cleaned_params = _clean_schema_for_gemini(function["parameters"])
+            # 修复：Antigravity 端的所有模型（包括 Claude）都受制于 Google API 的 Proto 校验，
+            # 因此必须统一使用 Gemini 的 schema 清理（否则会报 type 不能是 list 的错误）
+            cleaned_params = _clean_schema_for_gemini(function["parameters"])
+            log.debug(f"[OPENAI2GEMINI] Using Gemini schema cleaning for tool: {normalized_name}")
 
             if cleaned_params:
                 declaration["parameters"] = cleaned_params
