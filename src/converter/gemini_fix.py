@@ -441,6 +441,9 @@ async def normalize_gemini_request(
             elif "claude" in model.lower():
                 # Claude 模型兜底：如果包含 claude 但不是 opus/sonnet/haiku
                 model = "claude-sonnet-4-6"
+            elif "gemini-3.1-pro-high" in model.lower():
+                # 修复: Antigravity 已将 gemini-3.1-pro-high 更名为 gemini-pro-agent
+                model = "gemini-pro-agent"
             
             result["model"] = model
             if original_model != model:
